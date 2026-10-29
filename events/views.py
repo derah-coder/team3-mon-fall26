@@ -213,14 +213,13 @@ class EventDetailView(DetailView):
     context_object_name = 'event'
 
     def get_queryset(self):
-        return Event.objects.select_related('park', 'organizer')
+        return Event.objects.with_confirmed_players().select_related('park', 'organizer')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         event = self.object
         active_rsvps = event.rsvps.filter(status=RSVPStatus.ACTIVE).select_related('user')
-        active_count = active_rsvps.count()
-        confirmed_players = active_count + int(event.host_is_playing)
+        confirmed_players = event.confirmed_players
         user_rsvp = None
         if self.request.user.is_authenticated and self.request.user != event.organizer:
             user_rsvp = event.rsvps.filter(user=self.request.user).first()
@@ -234,10 +233,10 @@ class EventDetailView(DetailView):
             event_block_reason = 'This event has already started.'
 
         reason = event_block_reason
-        if reason is None and event.capacity is not None and confirmed_players >= event.capacity:
-            reason = 'This event is full.'
-        elif reason is None and user_rsvp and user_rsvp.status == RSVPStatus.REMOVED:
+        if reason is None and user_rsvp and user_rsvp.status == RSVPStatus.REMOVED:
             reason = 'Your RSVP was removed by the organizer.'
+        elif reason is None and event.capacity is not None and confirmed_players >= event.capacity:
+            reason = 'This event is full.'
 
         context.update(
             active_rsvps=active_rsvps,
@@ -265,7 +264,7 @@ class EventDetailView(DetailView):
 
 @require_POST
 def event_rsvp(request, pk):
-    event = get_object_or_404(Event, pk=pk)
+    event = get_object_or_404(Event.objects.with_confirmed_players(), pk=pk)
     if not request.user.is_authenticated:
         return redirect_to_login(event.get_absolute_url())
 
@@ -288,18 +287,15 @@ def event_rsvp(request, pk):
         messages.error(request, 'This event has been removed.')
     elif event.is_past:
         messages.error(request, 'This event has already started.')
+    elif event.capacity is not None and event.confirmed_players >= event.capacity:
+        messages.error(request, 'This event is full.')
     else:
-        confirmed_players = event.rsvps.filter(status=RSVPStatus.ACTIVE).count()
-        confirmed_players += int(event.host_is_playing)
-        if event.capacity is not None and confirmed_players >= event.capacity:
-            messages.error(request, 'This event is full.')
+        if rsvp:
+            rsvp.status = RSVPStatus.ACTIVE
+            rsvp.save(update_fields=['status', 'updated_at'])
         else:
-            if rsvp:
-                rsvp.status = RSVPStatus.ACTIVE
-                rsvp.save(update_fields=['status', 'updated_at'])
-            else:
-                RSVP.objects.create(event=event, user=request.user)
-            messages.success(request, 'You are attending this event.')
+            RSVP.objects.create(event=event, user=request.user)
+        messages.success(request, 'You are attending this event.')
 
     return redirect(detail_url)
 

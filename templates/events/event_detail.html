@@ -69,7 +69,7 @@
     </ul>
     <p>
       {% if event.capacity %}
-        {% if spots_remaining %}{{ spots_remaining }} spot{{ spots_remaining|pluralize }} remaining{% else %}No spots remaining{% endif %}
+        {% if spots_remaining %}{{ spots_remaining }} spot{{ spots_remaining|pluralize }} remaining{% else %}Full{% endif %}
       {% else %}
         Unlimited spots
       {% endif %}
@@ -89,6 +89,8 @@
         {% csrf_token %}
         <button class="btn btn--primary" type="submit">Join event</button>
       </form>
+    {% elif user.is_authenticated and user != event.organizer and rsvp_block_reason %}
+      <button class="btn btn--primary" type="button" disabled>Join event</button>
     {% elif not user.is_authenticated and not rsvp_block_reason %}
       <a href="{% url 'login' %}?next={{ event.get_absolute_url|urlencode }}">Sign in to RSVP</a>
     {% endif %}

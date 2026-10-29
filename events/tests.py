@@ -1,5 +1,6 @@
 import datetime
 import importlib
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection
@@ -560,7 +561,7 @@ class EventRSVPTests(TestCase):
 
                 page = self.client.get(self.detail_url)
                 self.assertContains(page, reason)
-                self.assertNotContains(page, '>Join event</button>')
+                self.assertContains(page, '<button class="btn btn--primary" type="button" disabled>Join event</button>', html=True)
                 response = self.client.post(self.rsvp_url, follow=True)
 
                 self.assertContains(response, reason)
@@ -568,6 +569,22 @@ class EventRSVPTests(TestCase):
 
         self.event.refresh_from_db()
         self.assertEqual(self.event.status, EventStatus.SCHEDULED)
+
+    def test_event_that_started_earlier_today_has_disabled_join_and_rejects_post(self):
+        now = datetime.datetime(2026, 10, 28, 15, 5, tzinfo=NYC_TZ)
+        self.event.date = now.date()
+        self.event.time = datetime.time(15)
+        self.event.save(update_fields=['date', 'time'])
+        self.client.force_login(self.player)
+
+        with patch('django.utils.timezone.now', return_value=now):
+            page = self.client.get(self.detail_url)
+            self.assertContains(page, 'This event has already started.')
+            self.assertContains(page, '<button class="btn btn--primary" type="button" disabled>Join event</button>', html=True)
+            response = self.client.post(self.rsvp_url, follow=True)
+
+        self.assertContains(response, 'This event has already started.')
+        self.assertFalse(RSVP.objects.filter(event=self.event, user=self.player).exists())
 
     def test_full_event_blocks_join_and_cancelled_or_removed_rsvps_do_not_consume_spots(self):
         self.event.capacity = 1
@@ -577,7 +594,8 @@ class EventRSVPTests(TestCase):
 
         full_page = self.client.get(self.detail_url)
         self.assertContains(full_page, 'This event is full.')
-        self.assertNotContains(full_page, '>Join event</button>')
+        self.assertContains(full_page, '<button class="btn btn--primary" type="button" disabled>Join event</button>', html=True)
+        self.assertContains(full_page, 'Full')
         rejected = self.client.post(self.rsvp_url, follow=True)
         self.assertContains(rejected, 'This event is full.')
         self.assertFalse(RSVP.objects.filter(event=self.event).exists())
@@ -613,9 +631,15 @@ class EventRSVPTests(TestCase):
         self.assertFalse(RSVP.objects.filter(event=self.event).exists())
 
     def test_removed_rsvp_cannot_be_reactivated(self):
+        self.event.capacity = 1
+        self.event.host_is_playing = True
+        self.event.save(update_fields=['capacity', 'host_is_playing'])
         RSVP.objects.create(event=self.event, user=self.player, status=RSVPStatus.REMOVED)
         self.client.force_login(self.player)
 
+        page = self.client.get(self.detail_url)
+        self.assertContains(page, 'Your RSVP was removed by the organizer.')
+        self.assertNotContains(page, 'This event is full.')
         response = self.client.post(self.rsvp_url, follow=True)
 
         self.assertContains(response, 'Your RSVP was removed by the organizer.')
@@ -648,7 +672,7 @@ class EventRSVPTests(TestCase):
         self.assertEqual(rsvp.status, RSVPStatus.ACTIVE)
         self.assertEqual(RSVP.objects.filter(event=self.event, user=self.player).count(), 1)
         self.assertContains(rejoined, 'Attending · Cancel RSVP')
-        self.assertContains(rejoined, 'No spots remaining')
+        self.assertContains(rejoined, 'Full')
 
     def test_cancelling_a_full_event_allows_another_member_to_join(self):
         self.event.capacity = 2
