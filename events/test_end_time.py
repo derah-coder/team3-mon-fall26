@@ -135,10 +135,19 @@ class EndTimeFormTests(EndTimeTestCase):
 class OlderEventTests(EndTimeTestCase):
     def test_events_without_an_end_time_run_two_hours(self):
         event = self.event('18:30')
+        self.assertEqual(event.end_time, datetime.time(20, 30), 'Saving without an end time fills in the default')
+        # A row the previous release saved during a rollback has no end time at all.
+        Event.objects.filter(pk=event.pk).update(end_time=None)
+        event.refresh_from_db()
 
         self.assertEqual(event.effective_end_time, datetime.time(20, 30))
         self.assertEqual(event.ends_at, datetime.datetime(2026, 11, 14, 20, 30, tzinfo=NYC_TZ))
         self.assertEqual(event.time_range, '6:30–8:30 PM')
+
+        event.title = 'Renamed'
+        event.save(update_fields=['title'])
+        event.refresh_from_db()
+        self.assertEqual(event.end_time, datetime.time(20, 30), 'A partial save fills it in too')
 
     def test_two_hour_fallback_stops_at_11_59_pm(self):
         self.assertEqual(default_end_time(datetime.time(21, 59)), datetime.time(23, 59))
@@ -150,6 +159,7 @@ class OlderEventTests(EndTimeTestCase):
         early = self.event('09:00')
         late = self.event('22:30')
         kept = self.event('18:00', '19:15')
+        Event.objects.filter(pk__in=[early.pk, late.pk]).update(end_time=None)
 
         migration.backfill_end_times(apps, None)
 

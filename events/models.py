@@ -230,6 +230,16 @@ class Event(models.Model):
     def get_absolute_url(self):
         return reverse('event_detail', kwargs={'pk': self.pk})
 
+    def save(self, *args, **kwargs):
+        # US-3.11 (#116): code that saves an event without an end time (the admin, seed data, tests) gets the
+        # same start + 2 hours default as older events, so phase queries (#117) can rely on the column.
+        if self.end_time is None and self.time is not None:
+            self.end_time = default_end_time(self.time)
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'end_time' not in update_fields:
+                kwargs['update_fields'] = [*update_fields, 'end_time']
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f'{self.display_title} at {self.park.name} ({self.date})'
 
