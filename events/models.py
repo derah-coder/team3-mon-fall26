@@ -13,6 +13,25 @@ MESSAGE_MAX_LENGTH = 2000
 # Event date/time are entered as New York local time (see EventCreateForm.clean).
 NYC_TZ = ZoneInfo('America/New_York')
 
+# US-3.11 (#116): games without an end time end 2 hours after they start, but no later than 11:59 PM.
+DEFAULT_GAME_LENGTH = datetime.timedelta(hours=2)
+LATEST_END_TIME = datetime.time(23, 59)
+
+
+def default_end_time(start):
+    """The end time for an event saved without one (older events, or a row written during a rollback)."""
+    end = datetime.datetime.combine(datetime.date.min, start) + DEFAULT_GAME_LENGTH
+    return end.time() if end.date() == datetime.date.min else LATEST_END_TIME
+
+
+def clock(value):
+    """'6:00' for 6 PM, matching the `g:i` date filter."""
+    return f'{value.hour % 12 or 12}:{value.minute:02d}'
+
+
+def meridiem(value):
+    return 'AM' if value.hour < 12 else 'PM'
+
 
 class SkillLevel(models.TextChoices):
     ALL = 'all', 'All skill levels'
@@ -118,6 +137,9 @@ class Event(models.Model):
     activity = models.CharField(max_length=100, choices=Activity.choices, db_index=True)
     date = models.DateField(db_index=True)
     time = models.TimeField()
+    # US-3.11 (#116). Nullable so the previous release can still save events after a rollback; the form
+    # requires it, and migration 0005 filled in older events. Read it through `effective_end_time`.
+    end_time = models.TimeField(null=True, blank=True)
     skill_level = models.CharField(
         max_length=32,
         choices=SkillLevel.choices,
@@ -160,6 +182,24 @@ class Event(models.Model):
     def starts_at(self):
         """Start as an aware datetime in New York time."""
         return datetime.datetime.combine(self.date, self.time, tzinfo=NYC_TZ)
+
+    @property
+    def effective_end_time(self):
+        """The end time, or start + 2 hours (capped at 11:59 PM) for a row saved without one."""
+        return self.end_time or default_end_time(self.time)
+
+    @property
+    def ends_at(self):
+        """End as an aware datetime in New York time. Games end on the day they start."""
+        return datetime.datetime.combine(self.date, self.effective_end_time, tzinfo=NYC_TZ)
+
+    @property
+    def time_range(self):
+        """'6:00–8:00 PM', or '11:00 AM–1:00 PM' when the game crosses noon."""
+        start, end = self.time, self.effective_end_time
+        if meridiem(start) == meridiem(end):
+            return f'{clock(start)}–{clock(end)} {meridiem(end)}'
+        return f'{clock(start)} {meridiem(start)}–{clock(end)} {meridiem(end)}'
 
     @property
     def has_started(self):
