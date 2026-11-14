@@ -57,7 +57,11 @@ class ExploreBadgeTests(PhaseBadgeTestCase):
         self.assertNotIn('<a ', over)
         self.assertIn('1 played', over, 'Just the host played')
         self.assertNotIn('spots left', over)
-        self.assertIn(f'href="{self.live.get_absolute_url()}"', card(html, 'On now'))
+        live = card(html, 'On now')
+        self.assertIn(f'href="{self.live.get_absolute_url()}"', live)
+        self.assertIn('1 playing', live, 'Joining closes at the start, so live cards show who is playing')
+        self.assertIn('In progress', live)
+        self.assertNotIn('spots left', live)
 
     def test_park_panel_greys_out_ended_rows_too(self):
         RSVP.objects.create(event=self.over, user=self.player)
